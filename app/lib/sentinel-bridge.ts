@@ -55,8 +55,8 @@ class SentinelBridge {
     );
   }
 
-  request(action: string, payload: any = {}) {
-    return new Promise((resolve, reject) => {
+  request<T = unknown>(action: string, payload: any = {}): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
       const requestId = Date.now().toString();
 
       this.pending[requestId] = { resolve, reject };

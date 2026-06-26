@@ -30,7 +30,7 @@ export default function Home() {
         console.log("[SentinelBridge] Page: init done, calling getUser");
         setBridgeStatus("ready");
 
-        const user: User = await sentinelBridge.call("getUser");
+        const user = await sentinelBridge.request<User>("getUser");
         console.log("[SentinelBridge] Page: getUser result", user);
         setUser(user);
       } catch (err) {
