@@ -1,29 +1,17 @@
 "use client";
 
 import { useEffect } from "react";
-import { installDevBridgeMock } from "../lib/sentinel-bridge-mock";
 import { sentinelBridge } from "../lib/sentinel-bridge";
 
-export default function BridgeProvider({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export function BridgeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
-    // Expose globally (optional but useful)
-    (window as any).SentinelBridgeSDK = sentinelBridge;
+    sentinelBridge.init().then(() => {
+      console.log("✅ Bridge ready");
 
-    // Native → Web entry point
-    (window as any).onNativeMessage = (message: any) => {
-      console.log("[SentinelBridge] onNativeMessage", message);
-      sentinelBridge.handleMessage(message);
-    };
-
-    installDevBridgeMock();
-
-    console.log("[SentinelBridge] Injected into window", {
-      sdk: "SentinelBridgeSDK",
-      entryPoint: "onNativeMessage",
+      // Example call
+      sentinelBridge.request("getUser").then((user) => {
+        console.log("👤 User from native:", user);
+      });
     });
   }, []);
 
