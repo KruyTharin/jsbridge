@@ -3,6 +3,46 @@ type PendingRequest = {
   reject: (err: any) => void;
 };
 
+type NativeOutboundMessage = {
+  action: string;
+  payload?: unknown;
+  requestId?: string;
+};
+
+type SentinelWindow = Window & {
+  SentinelBridge?: { postMessage: (msg: string) => void };
+  webkit?: {
+    messageHandlers?: {
+      SentinelBridge?: { postMessage: (msg: NativeOutboundMessage) => void };
+    };
+  };
+};
+
+function getSentinelWindow(): SentinelWindow | undefined {
+  if (typeof window === "undefined") return undefined;
+  return window as SentinelWindow;
+}
+
+function postToNative(message: NativeOutboundMessage): boolean {
+  const w = getSentinelWindow();
+  if (!w) return false;
+
+  // Android WebView JavascriptInterface
+  if (w.SentinelBridge?.postMessage) {
+    w.SentinelBridge.postMessage(JSON.stringify(message));
+    return true;
+  }
+
+  // iOS WKWebView message handler
+  const iosHandler = w.webkit?.messageHandlers?.SentinelBridge;
+  if (iosHandler?.postMessage) {
+    iosHandler.postMessage(message);
+    return true;
+  }
+
+  return false;
+}
+
 class SentinelBridge {
   private isReady = false;
   private pending: Record<string, PendingRequest> = {};
@@ -45,14 +85,9 @@ class SentinelBridge {
   }
 
   send(action: string, payload: any = {}) {
-    if (!(window as any).SentinelBridge) {
+    if (!postToNative({ action, payload })) {
       console.warn("⚠️ Native bridge not available");
-      return;
     }
-
-    (window as any).SentinelBridge.postMessage(
-      JSON.stringify({ action, payload })
-    );
   }
 
   request<T = unknown>(action: string, payload: any = {}): Promise<T> {
@@ -61,18 +96,15 @@ class SentinelBridge {
 
       this.pending[requestId] = { resolve, reject };
 
-      (window as any).SentinelBridge.postMessage(
-        JSON.stringify({
-          action,
-          payload,
-          requestId,
-        })
-      );
+      if (!postToNative({ action, payload, requestId })) {
+        delete this.pending[requestId];
+        reject(new Error("Native bridge not available"));
+        return;
+      }
 
-      // optional timeout
       setTimeout(() => {
         if (this.pending[requestId]) {
-          reject("Timeout");
+          reject(new Error("Timeout"));
           delete this.pending[requestId];
         }
       }, 5000);
