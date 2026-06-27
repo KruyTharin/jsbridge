@@ -9,14 +9,10 @@ declare global {
     };
 
     webkit?: {
-      messageHandlers?: {
-        iOSBridge?: {
-          postMessage: (message: {
-            handlerName: string;
-            payload: unknown;
-          }) => void;
-        };
-      };
+      messageHandlers?: Record<
+        string,
+        { postMessage: (message: { payload: unknown }) => void }
+      >;
     };
 
     onResponseInitialData?: (jwt: string) => void;
@@ -41,6 +37,9 @@ const RESPONSE_HANDLERS: Record<string, string> = {
   onRequestInitialData: "onResponseInitialData",
 };
 
+/** iOS registers each handler as its own WKScriptMessage name */
+const IOS_HANDLERS = ["onRequestInitialData", "onCompleteKYCProcess"];
+
 // -------------------- HELPERS --------------------
 
 function log(step: string, ...args: unknown[]) {
@@ -56,11 +55,17 @@ function getWindow(): Window | undefined {
   return window;
 }
 
+function hasIosBridge(): boolean {
+  const handlers = getWindow()?.webkit?.messageHandlers;
+  if (!handlers) return false;
+  return IOS_HANDLERS.some((name) => !!handlers[name]?.postMessage);
+}
+
 function getBridgePlatform(): BridgePlatform {
   const w = getWindow();
   if (!w) return "none";
   if (w.SentinelBridge) return "android";
-  if (w.webkit?.messageHandlers?.iOSBridge) return "ios";
+  if (hasIosBridge()) return "ios";
   return "none";
 }
 
@@ -109,11 +114,11 @@ function callNative(handlerName: string, payload: unknown): boolean {
     return true;
   }
 
-  const ios = w.webkit?.messageHandlers?.iOSBridge;
-  if (ios?.postMessage) {
-    const message = { handlerName, payload: payload ?? null };
-    log("→ iOS", message);
-    ios.postMessage(message);
+  const iosHandler = w.webkit?.messageHandlers?.[handlerName];
+  if (iosHandler?.postMessage) {
+    const message = { payload: payload ?? null };
+    log("→ iOS", handlerName, message);
+    iosHandler.postMessage(message);
     return true;
   }
 

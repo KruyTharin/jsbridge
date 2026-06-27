@@ -5,13 +5,20 @@ const MOCK_HANDLERS: Record<string, () => string> = {
   onRequestInitialData: () => MOCK_JWT,
 };
 
+const IOS_HANDLERS = ["onRequestInitialData", "onCompleteKYCProcess"];
+
 function hasNativeBridge() {
   const w = window as Window & {
     SentinelBridge?: Record<string, unknown>;
-    webkit?: { messageHandlers?: { iOSBridge?: unknown } };
+    webkit?: { messageHandlers?: Record<string, unknown> };
   };
 
-  return !!w.SentinelBridge || !!w.webkit?.messageHandlers?.iOSBridge;
+  const iosHandlers = w.webkit?.messageHandlers;
+  const hasIos =
+    !!iosHandlers &&
+    IOS_HANDLERS.some((name) => !!iosHandlers[name]);
+
+  return !!w.SentinelBridge || hasIos;
 }
 
 function replyWithHandler(
@@ -22,7 +29,6 @@ function replyWithHandler(
 
   setTimeout(() => {
     if (handler) {
-      // Mirrors native: evaluateJavaScript("onResponseInitialData('\(jwtToken)')")
       (globalThis as unknown as typeof w).onResponseInitialData?.(handler());
     }
   }, 150);
@@ -36,14 +42,10 @@ export function installDevBridgeMock() {
   const w = window as Window & {
     SentinelBridge?: Record<string, (...args: unknown[]) => void>;
     webkit?: {
-      messageHandlers?: {
-        iOSBridge?: {
-          postMessage: (msg: {
-            handlerName: string;
-            payload: unknown;
-          }) => void;
-        };
-      };
+      messageHandlers?: Record<
+        string,
+        { postMessage: (msg: { payload: unknown }) => void }
+      >;
     };
     onResponseInitialData?: (jwt: string) => void;
   };
@@ -60,12 +62,15 @@ export function installDevBridgeMock() {
 
   w.webkit = {
     messageHandlers: {
-      iOSBridge: {
+      onRequestInitialData: {
         postMessage: (message) => {
-          console.log("[SentinelBridge] [DEV MOCK] ios ←", message);
-          if (message.handlerName === "onRequestInitialData") {
-            replyWithHandler(w, message.handlerName);
-          }
+          console.log("[SentinelBridge] [DEV MOCK] ios ← onRequestInitialData", message);
+          replyWithHandler(w, "onRequestInitialData");
+        },
+      },
+      onCompleteKYCProcess: {
+        postMessage: (message) => {
+          console.log("[SentinelBridge] [DEV MOCK] ios ← onCompleteKYCProcess", message);
         },
       },
     },
