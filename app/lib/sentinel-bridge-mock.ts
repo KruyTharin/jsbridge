@@ -1,29 +1,31 @@
-const MOCK_USER = {
-  name: "Dev User",
-  email: "dev@example.com",
-  phone: "+1 555-0100",
-  address: "123 Dev Street",
-  city: "San Francisco",
-  state: "CA",
-  zip: "94105",
-  country: "US",
-  createdAt: new Date().toISOString(),
-};
+const MOCK_JWT =
+  "eyJhbGciOiJSU0EtT0FFUC0yNTYiLCJlbmMiOiJBMjU2R0NNIn0.mock.dev.token";
 
-const MOCK_HANDLERS: Record<string, () => unknown> = {
-  getUser: () => MOCK_USER,
+const MOCK_HANDLERS: Record<string, () => string> = {
+  onRequestInitialData: () => MOCK_JWT,
 };
 
 function hasNativeBridge() {
   const w = window as Window & {
-    SentinelBridge?: { postMessage?: (msg: string) => void };
-    webkit?: { messageHandlers?: { SentinelBridge?: unknown } };
+    SentinelBridge?: Record<string, unknown>;
+    webkit?: { messageHandlers?: { iOSBridge?: unknown } };
   };
 
-  return (
-    !!w.SentinelBridge?.postMessage ||
-    !!w.webkit?.messageHandlers?.SentinelBridge
-  );
+  return !!w.SentinelBridge || !!w.webkit?.messageHandlers?.iOSBridge;
+}
+
+function replyWithHandler(
+  w: Window & { onResponseInitialData?: (jwt: string) => void },
+  handlerName: string,
+) {
+  const handler = MOCK_HANDLERS[handlerName];
+
+  setTimeout(() => {
+    if (handler) {
+      // Mirrors native: evaluateJavaScript("onResponseInitialData('\(jwtToken)')")
+      (globalThis as unknown as typeof w).onResponseInitialData?.(handler());
+    }
+  }, 150);
 }
 
 export function installDevBridgeMock() {
@@ -32,44 +34,42 @@ export function installDevBridgeMock() {
   if (hasNativeBridge()) return false;
 
   const w = window as Window & {
-    SentinelBridge?: { postMessage: (msg: string) => void };
-    onNativeMessage?: (message: unknown) => void;
+    SentinelBridge?: Record<string, (...args: unknown[]) => void>;
+    webkit?: {
+      messageHandlers?: {
+        iOSBridge?: {
+          postMessage: (msg: {
+            handlerName: string;
+            payload: unknown;
+          }) => void;
+        };
+      };
+    };
+    onResponseInitialData?: (jwt: string) => void;
   };
 
   w.SentinelBridge = {
-    postMessage: (raw: string) => {
-      let message: { id?: string; method?: string };
-      try {
-        message = JSON.parse(raw);
-      } catch {
-        console.warn("[SentinelBridge] [DEV MOCK] invalid message", raw);
-        return;
-      }
-
-      console.log("[SentinelBridge] [DEV MOCK] native received ←", message);
-
-      const handler = message.method ? MOCK_HANDLERS[message.method] : undefined;
-
-      setTimeout(() => {
-        if (handler && message.id) {
-          w.onNativeMessage?.({ id: message.id, data: handler() });
-          return;
-        }
-
-        if (message.id) {
-          w.onNativeMessage?.({
-            id: message.id,
-            error: `Unknown method: ${message.method}`,
-          });
-        }
-      }, 150);
+    onRequestInitialData: () => {
+      console.log("[SentinelBridge] [DEV MOCK] android ← onRequestInitialData");
+      replyWithHandler(w, "onRequestInitialData");
+    },
+    onCompleteKYCProcess: () => {
+      console.log("[SentinelBridge] [DEV MOCK] android ← onCompleteKYCProcess");
     },
   };
 
-  setTimeout(() => {
-    console.log("[SentinelBridge] [DEV MOCK] sending bridgeReady");
-    w.onNativeMessage?.({ event: "bridgeReady" });
-  }, 300);
+  w.webkit = {
+    messageHandlers: {
+      iOSBridge: {
+        postMessage: (message) => {
+          console.log("[SentinelBridge] [DEV MOCK] ios ←", message);
+          if (message.handlerName === "onRequestInitialData") {
+            replyWithHandler(w, message.handlerName);
+          }
+        },
+      },
+    },
+  };
 
   console.log("[SentinelBridge] [DEV MOCK] installed for browser testing");
   return true;

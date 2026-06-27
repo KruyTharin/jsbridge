@@ -5,68 +5,103 @@ import { sentinelBridge } from "./lib/sentinel-bridge";
 
 type BridgeStatus = "loading" | "ready" | "error";
 
-interface User {
-  name: string;
-  email: string;
-  phone: string;
-  address: string;
-  city: string;
-  state: string;
-  zip: string;
-  country: string;
-  createdAt: string;
-}
-
 export default function Home() {
-  const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>("loading");
-  const [bridgeError, setBridgeError] = useState<string | null>(null);
-  const [user, setUser] = useState<User | null>(null);
+  const [status, setStatus] = useState<BridgeStatus>("loading");
+  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
+
   useEffect(() => {
-    async function run() {
-      console.log("[SentinelBridge] Page: init started");
-
-      try {
-        await sentinelBridge.init();
-        console.log("[SentinelBridge] Page: init done, calling getUser");
-        setBridgeStatus("ready");
-
-        const user = await sentinelBridge.request<User>("getUser");
-        console.log("[SentinelBridge] Page: getUser result", user);
-        setUser(user);
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Bridge initialization failed";
-        console.error("[SentinelBridge] Page: init failed", err);
-        setBridgeError(message);
-        setBridgeStatus("error");
-      }
-    }
-
-    run();
+    sentinelBridge
+      .init()
+      .then(() => setStatus("ready"))
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Bridge not available");
+        setStatus("error");
+      });
   }, []);
 
-  if (bridgeStatus === "loading") {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4">
-        <div
-          className="h-8 w-8 animate-spin rounded-full border-2 border-foreground/20 border-t-foreground"
-          aria-hidden
-        />
-        <p className="text-sm text-foreground/70">Connecting to bridge...</p>
-      </div>
-    );
+  async function handleRequestInitialData() {
+    setActionError(null);
+    setLoadingAction("onRequestInitialData");
+
+    try {
+      const jwt = await sentinelBridge.request<string>(
+        "onRequestInitialData",
+        null,
+      );
+      setData(jwt);
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "onRequestInitialData failed",
+      );
+    } finally {
+      setLoadingAction(null);
+    }
   }
 
-  if (bridgeStatus === "error") {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-2 px-6 text-center">
-        <p className="text-sm font-medium text-red-500">
-          Bridge connection failed
-        </p>
-        <p className="text-sm text-foreground/60">{bridgeError}</p>
-      </div>
-    );
+  function handleCompleteKYCProcess() {
+    setActionError(null);
+    setLoadingAction("onCompleteKYCProcess");
+
+    try {
+      const payload = JSON.stringify({ token: "jwt" });
+
+      // this now supports BOTH iOS + Android correctly
+      sentinelBridge.send("onCompleteKYCProcess", payload);
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "onCompleteKYCProcess failed",
+      );
+    } finally {
+      setLoadingAction(null);
+    }
   }
 
-  return <div>Home {JSON.stringify(user)}</div>;
+  if (status === "loading") {
+    return <div>Loading bridge...</div>;
+  }
+
+  if (status === "error") {
+    return <div>Error: {error}</div>;
+  }
+
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 p-6">
+      <h1 className="text-xl font-semibold">Home</h1>
+
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <button
+          type="button"
+          onClick={handleRequestInitialData}
+          disabled={loadingAction !== null}
+          className="rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+        >
+          {loadingAction === "onRequestInitialData"
+            ? "Loading..."
+            : "onRequestInitialData"}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleCompleteKYCProcess}
+          disabled={loadingAction !== null}
+          className="rounded-lg border border-foreground/20 px-4 py-2 text-sm font-medium disabled:opacity-50"
+        >
+          {loadingAction === "onCompleteKYCProcess"
+            ? "Processing..."
+            : "onCompleteKYCProcess"}
+        </button>
+      </div>
+
+      {actionError && <p className="text-sm text-red-500">{actionError}</p>}
+
+      {data && (
+        <pre className="max-w-full break-all rounded-lg border border-foreground/10 p-4 text-xs">
+          {data}
+        </pre>
+      )}
+    </div>
+  );
 }

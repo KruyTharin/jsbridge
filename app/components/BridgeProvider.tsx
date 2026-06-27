@@ -1,18 +1,21 @@
 "use client";
 
 import { useEffect } from "react";
+import { installDevBridgeMock } from "../lib/sentinel-bridge-mock";
 import { sentinelBridge } from "../lib/sentinel-bridge";
 
 export function BridgeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
-    sentinelBridge.init().then(() => {
-      console.log("✅ Bridge ready");
+    installDevBridgeMock();
 
-      // Example call
-      sentinelBridge.request("getUser").then((user) => {
-        console.log("👤 User from native:", user);
+    sentinelBridge
+      .init()
+      .then(() => {
+        console.log("✅ Bridge detected");
+      })
+      .catch((err) => {
+        console.error("❌ Bridge not available", err);
       });
-    });
   }, []);
 
   return <>{children}</>;
