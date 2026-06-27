@@ -5,8 +5,6 @@ declare global {
     SentinelBridge?: {
       onCompleteKYCProcess?: (payload: string) => void;
       onRequestInitialData?: (payload?: unknown) => void;
-
-      // allow dynamic handlers
       [key: string]: unknown;
     };
 
@@ -21,9 +19,7 @@ declare global {
       };
     };
 
-    // native → web callbacks
     onResponseInitialData?: (jwt: string) => void;
-
     [key: string]: unknown;
   }
 }
@@ -37,16 +33,35 @@ type PendingRequest<T = unknown> = {
 
 type EventHandler<T = unknown> = (data: T) => void;
 
-// request → response mapping
+type BridgePlatform = "android" | "ios" | "none";
+
+const LOG_PREFIX = "[SentinelBridge]";
+
 const RESPONSE_HANDLERS: Record<string, string> = {
   onRequestInitialData: "onResponseInitialData",
 };
 
 // -------------------- HELPERS --------------------
 
+function log(step: string, ...args: unknown[]) {
+  console.log(`${LOG_PREFIX} ${step}`, ...args);
+}
+
+function warn(step: string, ...args: unknown[]) {
+  console.warn(`${LOG_PREFIX} ${step}`, ...args);
+}
+
 function getWindow(): Window | undefined {
   if (typeof window === "undefined") return undefined;
   return window;
+}
+
+function getBridgePlatform(): BridgePlatform {
+  const w = getWindow();
+  if (!w) return "none";
+  if (w.SentinelBridge) return "android";
+  if (w.webkit?.messageHandlers?.iOSBridge) return "ios";
+  return "none";
 }
 
 function safeParse<T = unknown>(data: unknown): T {
@@ -61,33 +76,48 @@ function safeParse<T = unknown>(data: unknown): T {
 }
 
 function isBridgeAvailable(): boolean {
-  const w = getWindow();
-  return !!(w?.SentinelBridge || w?.webkit?.messageHandlers?.iOSBridge);
+  return getBridgePlatform() !== "none";
+}
+
+function previewData(data: unknown): unknown {
+  if (typeof data === "string" && data.length > 80) {
+    return `${data.slice(0, 80)}...`;
+  }
+  return data;
 }
 
 function callNative(handlerName: string, payload: unknown): boolean {
   const w = getWindow();
-  if (!w) return false;
+  if (!w) {
+    warn("callNative: no window", handlerName);
+    return false;
+  }
 
-  // ✅ Android
-  const androidHandler = w.SentinelBridge?.[handlerName];
+  const bridge = w.SentinelBridge;
+  const androidHandler = bridge?.[handlerName];
 
+  // Android: must call on the injected object — detached calls fail with
+  // "Bridge method can't be invoked on a non-injected object"
   if (typeof androidHandler === "function") {
-    androidHandler(payload);
+    if (payload != null) {
+      log("→ Android", handlerName, payload);
+      androidHandler.call(bridge, payload);
+    } else {
+      log("→ Android", handlerName);
+      androidHandler.call(bridge);
+    }
     return true;
   }
 
-  // ✅ iOS
   const ios = w.webkit?.messageHandlers?.iOSBridge;
-
   if (ios?.postMessage) {
-    ios.postMessage({
-      handlerName,
-      payload: payload ?? null,
-    });
+    const message = { handlerName, payload: payload ?? null };
+    log("→ iOS", message);
+    ios.postMessage(message);
     return true;
   }
 
+  warn("callNative: bridge not available", handlerName);
   return false;
 }
 
@@ -95,9 +125,7 @@ function callNative(handlerName: string, payload: unknown): boolean {
 
 class SentinelBridge {
   private isReady = false;
-
   private pendingByResponse: Record<string, PendingRequest> = {};
-
   private events: Record<string, EventHandler[]> = {};
 
   constructor() {
@@ -106,19 +134,23 @@ class SentinelBridge {
     }
   }
 
-  // -------------------- INIT --------------------
-
   init(timeout = 3000): Promise<void> {
+    log("init: started");
+
     return new Promise((resolve, reject) => {
       const start = Date.now();
 
       const check = () => {
-        if (isBridgeAvailable()) {
+        const platform = getBridgePlatform();
+
+        if (platform !== "none") {
           this.isReady = true;
+          log("init: bridge detected", platform);
           return resolve();
         }
 
         if (Date.now() - start > timeout) {
+          warn("init: timeout");
           return reject(new Error("Bridge not available"));
         }
 
@@ -129,29 +161,26 @@ class SentinelBridge {
     });
   }
 
-  // -------------------- REGISTER CALLBACKS --------------------
-
   private registerNativeCallbacks() {
     const w = getWindow();
     if (!w) return;
 
-    // ✅ response callback
     w.onResponseInitialData = (jwt: string) => {
+      log("← native onResponseInitialData", previewData(jwt));
       this.resolveResponse<string>("onResponseInitialData", jwt);
     };
 
-    // ✅ event callbacks
     const eventHandlers = ["onCompleteKYCProcess"];
 
     eventHandlers.forEach((name) => {
       w[name] = (data: unknown) => {
-        console.log(`📩 Event: ${name}`, data);
+        log(`← native event ${name}`, previewData(data));
         this.emit(name, data);
       };
     });
-  }
 
-  // -------------------- RESPONSE HANDLING --------------------
+    log("callbacks registered", Object.keys(RESPONSE_HANDLERS), eventHandlers);
+  }
 
   private resolveResponse<T = unknown>(responseHandler: string, data: unknown) {
     const pending = this.pendingByResponse[responseHandler] as
@@ -159,18 +188,18 @@ class SentinelBridge {
       | undefined;
 
     if (!pending) {
-      console.warn(`No pending request for ${responseHandler}`, data);
+      warn(`resolveResponse: no pending request for ${responseHandler}`, previewData(data));
       return;
     }
 
+    log(`resolveResponse: ${responseHandler}`, previewData(data));
     pending.resolve(safeParse<T>(data));
     delete this.pendingByResponse[responseHandler];
   }
 
-  // -------------------- EVENTS --------------------
-
   private emit<T = unknown>(event: string, data: unknown) {
     const parsed = safeParse<T>(data);
+    log(`emit: ${event}`, previewData(parsed));
     this.events[event]?.forEach((cb) => cb(parsed));
   }
 
@@ -180,21 +209,20 @@ class SentinelBridge {
     }
 
     this.events[event].push(handler as EventHandler);
+    log(`on: subscribed to ${event}`);
 
     return () => {
       this.events[event] = this.events[event].filter((h) => h !== handler);
     };
   }
 
-  // -------------------- SEND --------------------
-
   send(handlerName: string, payload: unknown = null) {
+    log("send", { handlerName, payload: previewData(payload) });
+
     if (!callNative(handlerName, payload)) {
-      console.warn("⚠️ Native bridge not available");
+      warn("send: native bridge not available", handlerName);
     }
   }
-
-  // -------------------- REQUEST (Promise-based) --------------------
 
   request<T = unknown>(
     handlerName: string,
@@ -209,10 +237,23 @@ class SentinelBridge {
       );
     }
 
+    log("request: started", {
+      handlerName,
+      responseHandler,
+      payload: previewData(payload),
+      timeout,
+    });
+
     return new Promise<T>((resolve, reject) => {
       this.pendingByResponse[responseHandler] = {
-        resolve: (data) => resolve(data as T),
-        reject,
+        resolve: (data) => {
+          log("request: resolved", { handlerName, data: previewData(data) });
+          resolve(data as T);
+        },
+        reject: (err) => {
+          warn("request: rejected", { handlerName, error: err.message });
+          reject(err);
+        },
       };
 
       if (!callNative(handlerName, payload)) {
@@ -223,6 +264,7 @@ class SentinelBridge {
 
       setTimeout(() => {
         if (this.pendingByResponse[responseHandler]) {
+          warn("request: timeout", { handlerName, responseHandler, timeout });
           this.pendingByResponse[responseHandler].reject(new Error("Timeout"));
           delete this.pendingByResponse[responseHandler];
         }
@@ -230,7 +272,5 @@ class SentinelBridge {
     });
   }
 }
-
-// -------------------- EXPORT --------------------
 
 export const sentinelBridge = new SentinelBridge();

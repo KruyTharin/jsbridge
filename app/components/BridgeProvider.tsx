@@ -11,10 +11,10 @@ export function BridgeProvider({ children }: { children: React.ReactNode }) {
     sentinelBridge
       .init()
       .then(() => {
-        console.log("✅ Bridge detected");
+        console.log("[SentinelBridge] BridgeProvider: ready");
       })
       .catch((err) => {
-        console.error("❌ Bridge not available", err);
+        console.error("[SentinelBridge] BridgeProvider: failed", err);
       });
   }, []);
 

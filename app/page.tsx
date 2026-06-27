@@ -13,10 +13,16 @@ export default function Home() {
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
 
   useEffect(() => {
+    console.log("[SentinelBridge] Page: waiting for bridge");
+
     sentinelBridge
       .init()
-      .then(() => setStatus("ready"))
+      .then(() => {
+        console.log("[SentinelBridge] Page: bridge ready");
+        setStatus("ready");
+      })
       .catch((err) => {
+        console.error("[SentinelBridge] Page: bridge failed", err);
         setError(err instanceof Error ? err.message : "Bridge not available");
         setStatus("error");
       });
@@ -25,14 +31,17 @@ export default function Home() {
   async function handleRequestInitialData() {
     setActionError(null);
     setLoadingAction("onRequestInitialData");
+    console.log("[SentinelBridge] Page: onRequestInitialData clicked");
 
     try {
       const jwt = await sentinelBridge.request<string>(
         "onRequestInitialData",
         null,
       );
+      console.log("[SentinelBridge] Page: got JWT", jwt.slice(0, 80) + "...");
       setData(jwt);
     } catch (err) {
+      console.error("[SentinelBridge] Page: onRequestInitialData failed", err);
       setActionError(
         err instanceof Error ? err.message : "onRequestInitialData failed",
       );
@@ -44,13 +53,13 @@ export default function Home() {
   function handleCompleteKYCProcess() {
     setActionError(null);
     setLoadingAction("onCompleteKYCProcess");
+    console.log("[SentinelBridge] Page: onCompleteKYCProcess clicked");
 
     try {
       const payload = JSON.stringify({ token: "jwt" });
-
-      // this now supports BOTH iOS + Android correctly
       sentinelBridge.send("onCompleteKYCProcess", payload);
     } catch (err) {
+      console.error("[SentinelBridge] Page: onCompleteKYCProcess failed", err);
       setActionError(
         err instanceof Error ? err.message : "onCompleteKYCProcess failed",
       );
